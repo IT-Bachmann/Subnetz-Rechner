@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8">
+<title>Subnet Generator</title>
+
+<style>
+body { 
+    font-family: Arial; 
+    background:#0f172a; 
+    color:#fff; 
+    padding:10px; 
+    margin:0;
+}
+
+.container {
+    max-width: 1100px;
+    margin: auto;
+    padding: 0 15px
+}
+
+/* INPUTS */
+input {
+    padding:12px;
+    border-radius:6px;
+    border:none;
+    font-size:16px;
+    width:100%;
+    box-sizing: border-box;
+}
+
+button {
+    padding:12px;
+    border-radius:6px;
+    border:none;
+    font-size:16px;
+    background:#3b82f6; 
+    color:white; 
+    cursor:pointer;
+    min-width:100px;
+    transition:0.2s;
+}
+
+button:hover {
+    background:#2563eb;
+    transform: translateY(-1px);
+}
+
+button:disabled {
+    opacity:0.4;
+    cursor:not-allowed;
+}
+
+/* TOPBAR */
+.topbar {
+    display:grid;
+    grid-template-columns: 2fr 2fr 120px;
+    gap:15px;
+}
+
+/* CARDS */
+.card {
+    background:#1e293b;
+    padding:12px;
+    margin-top:10px;
+    border-radius:10px;
+    border:1px solid #334155;
+}
+
+pre { 
+    margin:0; 
+    font-size:14px; 
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* CONTROLS */
+.controls {
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    gap:15px;
+    margin-top:10px;
+}
+
+.controls button {
+    flex:0 0 auto;
+    min-width:120px;
+}
+
+/* START */
+.controls button:nth-child(2) {
+    min-width:120px;
+    font-weight:bold;
+}
+
+/* SIDEPAGE */
+#pageinfo {
+    text-align:center;
+    margin-top:8px;
+    font-weight:bold;
+}
+
+.autofill {
+    grid-column: 1 / -1;
+    display:flex;
+    justify-content:center;
+    gap:10px;
+    margin-top:10px;
+}
+
+.autofill button {
+    min-width:180px;
+}
+
+.reset-btn {
+    background:#ef4444;
+}
+
+.reset-btn:hover {
+    background:#dc2626;
+}
+
+/* Desktop */
+@media (min-width:700px) {
+
+    .topbar {
+        display:grid;
+        grid-template-columns: 2fr 2fr 120px;
+        gap:15px;
+    }
+
+    .network-group {
+        flex-direction:row;
+        align-items:center;
+    }
+
+    .network-group input {
+        flex:2;
+    }
+
+    .autofill {
+        flex:1;
+    }
+}
+
+.card.clickable b::after {
+    content:" ▼";
+}
+
+.card.open b::after {
+    content:" ▲";
+}
+
+.no-click b::after {
+    content:"";
+}
+
+/* MOBILE */
+@media (max-width: 700px) {
+
+    .topbar {
+        grid-template-columns: 1fr;
+    }
+
+    .controls {
+        flex-direction:column;
+    }
+
+    #pageinfo {
+        text-align:center;
+    }
+
+    button {
+        width:100%;
+    }
+
+    pre {
+        font-size:13px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h2>Subnet Generator (IPv4 + IPv6)</h2>
+
+    <div class="controls">
+        <button onclick="exportAll('txt')">Export TXT (alle)</button>
+        <button onclick="exportAll('csv')">Export Excel als CSV (alle)</button>
+        <button id="exportXLSX" onclick="exportAll('xlsx')">Export Excel (XLSX)</button>
+    </div>
+    <br>
+
+    <div class="topbar">
+
+        <input id="network" placeholder="192.168.0.0/24 oder 2001:db8::/48">
+        <input id="levels" placeholder="22 | 24,28 oder 56  | 64,72,80">
+        <input id="limit" value="50">
+
+        <div class="autofill">
+            <button onclick="fillIPv4()">IPv4 Beispiel</button>
+            <button onclick="fillIPv6()">IPv6 Beispiel</button>
+        </div>
+
+    </div>
+
+    <div class="controls">
+        <button onclick="prev()">⬅️</button>
+        <button onclick="start()">Start</button>
+        <button onclick="next()">➡️</button>
+        <button onclick="resetForm()" class="reset-btn">Reset</button>
+    </div>
+
+    <div id="pageinfo"></div>
+
+    <div id="stats"></div>
+    <div id="output"></div>
+
+</div>
+
+<script>
+
+let page = 0;
+let totalPages = 0;
+let currentLevels = [];
+const cache = {};
+
+// =====================
+// AUTOFILLFUNCTION
+// =====================
+
+function fillIPv4() {
+    document.getElementById("network").value = "192.168.0.0/24";
+    document.getElementById("levels").value = "26,28,30";
+}
+
+function fillIPv6() {
+    document.getElementById("network").value = "2001:db8::/48";
+    document.getElementById("levels").value = "56,64,72";
+}
+
+//======================
+//RESTET
+//======================
+function resetForm() {
+
+    document.getElementById("network").value = "";
+    document.getElementById("levels").value = "";
+    document.getElementById("limit").value = "50";
+
+    document.getElementById("output").innerHTML = "";
+    document.getElementById("stats").innerHTML = "";
+    document.getElementById("pageinfo").innerText = "";
+
+    page = 0;
+}
+
+//======================
+//EXPORTCalc
+//======================
+function estimateNetworks() {
+
+    let network = document.getElementById("network").value;
+    let levels  = document.getElementById("levels").value;
+
+    if (!network.includes("/") || !levels) return 0;
+
+    let prefix = parseInt(network.split("/")[1]);
+    let lvlArr = levels.split(",").map(x => parseInt(x.trim()));
+
+    let lastLevel = lvlArr[lvlArr.length - 1];
+
+    return Math.pow(2, lastLevel - prefix);
+}
+
+function updateExportButtons() {
+
+    let estimated = estimateNetworks();
+    let btn = document.getElementById("exportXLSX");
+
+    // DEBUG (optional)
+    console.log("Estimated:", estimated);
+
+    if (estimated === 0) {
+        btn.disabled = true;
+        btn.title = "Ungültige Eingabe";
+        return;
+    }
+
+    if (estimated > 1000000) {
+        btn.disabled = true;
+        btn.title = "Zu viele Daten für Excel!";
+    } else {
+        btn.disabled = false;
+        btn.title = "";
+    }
+}
+
+//======================
+//EXPORT
+//======================
+function exportAll(type) {
+
+    let network = document.getElementById("network").value;
+    let levels  = document.getElementById("levels").value;
+
+    if (!network || !levels) {
+        alert("Bitte Netzwerk + Levels eingeben");
+        return;
+    }
+
+    let url = `api/export.php?network=${network}&levels=${levels}&type=${type}`;
+
+    window.location.href = url; // DIREKTER DOWNLOAD
+}
+
+// =====================
+// LOAD
+// =====================
+async function load() {
+
+    let network = document.getElementById("network").value;
+    let levels = document.getElementById("levels").value;
+    let limit = parseInt(document.getElementById("limit").value);
+
+    let res = await fetch(`api/subnets.php?network=${network}&levels=${levels}&offset=${page*limit}&limit=${limit}`);
+    let json = await res.json();
+
+    currentLevels = json.levels;
+
+    // ===== STATS =====
+    let statsHTML = `<b>Startnetz:</b> ${json.network}<br><br>`;
+    let prev = parseInt(json.network.split("/")[1]);
+    let total = 1;
+
+    json.levels.forEach(level => {
+        let count = Math.pow(2, level - prev);
+        total *= count;
+        statsHTML += `/${prev} → /${level}: <b>${count.toLocaleString()}</b> Netze<br>`;
+        prev = level;
+    });
+
+    statsHTML += `<br><b>Gesamt:</b> ${total.toLocaleString()} Netze<br><hr>`;
+    document.getElementById("stats").innerHTML = statsHTML;
+
+    // ===== OUTPUT =====
+    let lvl1 = json.levels[0];
+    let html = "";
+
+    json.data.forEach((l1, i) => {
+
+        if (l1.level != lvl1) return;
+
+        let id = "sub_" + i;
+
+        html += `
+        <div class="card"
+             onclick="event.stopPropagation(); toggle('${id}', '${l1.network}', 0)">
+            <pre><b>/ ${l1.level}</b></pre>
+            <pre>Netz: ${l1.network}</pre>
+            ${l1.first ? `<pre>Erste IP: ${l1.first}</pre>` : ''}
+            ${l1.last ? `<pre>Letzte IP: ${l1.last}</pre>` : ''}
+            <div class="expand-hint">Klicken zum Aufklappen</div>
+        </div>
+
+        <div id="${id}" style="display:none;"></div>
+        `;
+    });
+
+    document.getElementById("output").innerHTML = html;
+
+    // ===== PAGING =====
+    let basePrefix = parseInt(json.network.split("/")[1]);
+    let totalLvl1 = Math.pow(2, lvl1 - basePrefix);
+
+    totalPages = Math.ceil(totalLvl1 / limit);
+
+    document.getElementById("pageinfo").innerText =
+        `Seite ${page+1} / ${totalPages}`;
+
+    // Buttons
+    document.querySelector("button[onclick='next()']").disabled = (page+1 >= totalPages);
+    document.querySelector("button[onclick='prev()']").disabled = (page === 0);
+}
+
+// =====================
+// TOGGLE
+// =====================
+async function toggle(id, parentNet, levelIndex = 0) {
+
+    let el = document.getElementById(id);
+
+    let isOpen = el.style.display === "block";
+
+    // =====================
+    // CLOSE
+    // =====================
+    if (isOpen) {
+        el.style.display = "none";
+        el.previousElementSibling.classList.remove("open");
+        return;
+    }
+
+    // =====================
+    // OPEN
+    // =====================
+    el.style.display = "block";
+    el.previousElementSibling.classList.add("open");
+
+    // =====================
+    // LOAD ONLY ONCE
+    // =====================
+    if (el.innerHTML !== "") return;
+
+    let limit = document.getElementById("limit").value;
+
+    let nextIndex = levelIndex + 1;
+    if (nextIndex >= currentLevels.length) return;
+
+    let nextLevel = currentLevels[nextIndex];
+    let cacheKey = parentNet + "|" + nextLevel;
+
+    // =====================
+    // CACHE HIT
+    // =====================
+    if (cache[cacheKey]) {
+        el.innerHTML = cache[cacheKey];
+        return;
+    }
+
+    // =====================
+    // FETCH
+    // =====================
+    let res = await fetch(`api/subnets.php?network=${parentNet}&levels=${nextLevel}&offset=0&limit=${limit}`);
+    let json = await res.json();
+
+    let html = "";
+
+    json.data.forEach((n, i) => {
+
+        let subId = id + "_" + i;
+        let isLastLevel = (nextIndex === currentLevels.length - 1);
+        let clickable = !isLastLevel;
+
+        let subnetId = "";
+        let subnetDec = "";
+
+        if (n.raw) {
+            let parentPrefix = parseInt(parentNet.split("/")[1]);
+            let parts = n.raw.split(":");
+
+            let blockIndex = Math.floor(parentPrefix / 16);
+            subnetId = (parts[blockIndex] || "0").padStart(4, "0");
+            subnetDec = parseInt(subnetId, 16);
+        }
+
+        html += `
+        <div style="margin-left:${nextIndex*20}px;border-left:5px solid hsl(${nextIndex*60},70%,50%);" 
+            class="card ${clickable ? 'clickable' : 'no-click'}"
+            ${clickable ? `onclick="event.stopPropagation(); toggle('${subId}', '${n.network}', ${nextIndex})"` : ''}>
+
+            <pre><b>/ ${n.level}</b></pre>
+            <pre>Netz: ${n.network}</pre>
+
+            ${subnetId ? `<pre>Subnet-ID: ${subnetId} (dec: ${subnetDec})</pre>` : ''}
+
+            ${n.first ? `<pre>Erste IP: ${n.first}</pre>` : ''}
+            ${n.last ? `<pre>Letzte IP: ${n.last}</pre>` : ''}
+
+            ${clickable ? `<div class="expand-hint">Klicken zum Aufklappen</div>` : ''}
+
+        </div>
+
+        ${clickable ? `<div id="${subId}" style="display:none;"></div>` : ''}
+        `;
+
+    });
+
+    cache[cacheKey] = html;
+    el.innerHTML = html;
+}
+
+// =====================
+// NAV
+// =====================
+function start() {
+
+    let network = document.getElementById("network").value;
+    let levelsInput = document.getElementById("levels").value;
+
+    if (!network.includes("/")) {
+        alert("Ungültiges Netzwerkformat!");
+        return;
+    }
+
+    let prefix = parseInt(network.split("/")[1]);
+    let levels = levelsInput.split(",").map(x => parseInt(x.trim()));
+
+    let isIPv6 = network.includes(":");
+    let maxPrefix = isIPv6 ? 128 : 32;
+
+    if (prefix < 0 || prefix > maxPrefix) {
+        alert("Ungültiger Prefix!");
+        return;
+    }
+
+    for (let lvl of levels) {
+        if (isNaN(lvl) || lvl <= prefix || lvl > maxPrefix) {
+            alert("Ungültige Levels!");
+            return;
+        }
+    }
+
+    for (let i = 1; i < levels.length; i++) {
+        if (levels[i] <= levels[i-1]) {
+            alert("Levels müssen aufsteigend sein!");
+            return;
+        }
+    }
+
+    page = 0;
+    load();
+}
+
+function next() {
+    if (page + 1 >= totalPages) return;
+    page++;
+    load();
+}
+
+function prev() {
+    if (page > 0) {
+        page--;
+        load();
+    }
+}
+
+// =====================
+// INIT EVENTS
+// =====================
+document.addEventListener("DOMContentLoaded", function () {
+
+    document.getElementById("network").addEventListener("input", updateExportButtons);
+    document.getElementById("levels").addEventListener("input", updateExportButtons);
+
+    updateExportButtons();
+
+});
+
+</script>
+
+</body>
+</html>       load();
+    }
+}
+
+
+// INIT EVENTS
+
+document.addEventListener("DOMContentLoaded", function () {
+
+    document.getElementById("network").addEventListener("input", updateExportButtons);
+    document.getElementById("levels").addEventListener("input", updateExportButtons);
+
+    updateExportButtons();
+
+});
+
+</script>
+
+</body>
+</html>
